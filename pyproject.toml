@@ -1,0 +1,27 @@
+[project]
+name = "agentic-recon"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "agentlightning[verl]",
+    "flash-attn>=2.8.3",
+    "langchain>=0.3.27",
+    "langchain-community>=0.3.21",
+    "langgraph",
+    "nltk>=3.9.2",
+    "openai>=2.8.0",
+    "sqlparse>=0.5.3",
+    "agentops>=0.4.21",
+    "langchain-openai>=0.3.35",
+    "weave>=0.51.56",
+    "httpx>=0.28.1",
+    "openai-agents>=0.5.1",
+]
+
+
+[dependency-groups]
+dev = [
+    "gdown"
+]
