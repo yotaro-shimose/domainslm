@@ -1,23 +1,56 @@
+import os
 import subprocess
 import time
-from typing import Self
+from typing import ParamSpec, Self
 
 import agentlightning as agl
 import httpx
-from agents import OpenAIChatCompletionsModel, function_tool
+import torch
+from agents import OpenAIChatCompletionsModel
 from openai import AsyncOpenAI
 from pydantic import BaseModel, InstanceOf
 
-
+P = ParamSpec("P")
 class VLLMSetup(BaseModel):
     model: str
     port: int = 5222
+    max_model_len: int = 32768
     api_key: str = "your_api_key_here"
     vllm_process: InstanceOf[subprocess.Popen | None] = None
+    data_parallel_size: int | None = None
+    reasoning_parser: str | None = None
+
+    @classmethod
+    def qwen3(cls, **kwargs) -> Self:
+        return cls(
+            model="Qwen/Qwen3-4B",
+            reasoning_parser="deepseek_r1",
+            **kwargs,
+        )
+
+    @classmethod
+    def qwen3_reasoning(cls, **kwargs) -> Self:
+        return cls(
+            model="Qwen/Qwen3-4B-Thinking-2507",
+            reasoning_parser="deepseek_r1",
+            **kwargs,
+        )
+
+    @classmethod
+    def phi4(cls, **kwargs) -> Self:
+        return cls(model="microsoft/Phi-4-mini-instruct", **kwargs)
+
+    @classmethod
+    def phi4_reasoning(cls, **kwargs) -> Self:
+        return cls(
+            model="microsoft/Phi-4-mini-reasoning",
+            # reasoning_parser="deepseek_r1",
+            **kwargs,
+        )
 
     @property
     def base_url(self) -> str:
-        return f"http://localhost:{self.port}/v1"
+        return f"http://localhost:{self.port}"
 
     async def is_vllm_running(self) -> bool:
         url = f"{self.base_url}/health"
@@ -29,27 +62,42 @@ class VLLMSetup(BaseModel):
                 return False
 
     def launch_vllm_server(self) -> subprocess.Popen:
-        vllm_process = subprocess.Popen(
-            [
-                "vllm",
-                "serve",
-                self.model,
-                "--port",
-                str(self.port),
-                "--enable-auto-tool-choice",
-                "--tool-call-parser",
-                "hermes",
-                "--reasoning-parser",
-                "deepseek_r1",
-                "--api-key",
-                self.api_key,
-            ]
-        )
+        commands: list[str] = [
+            "vllm",
+            "serve",
+            self.model,
+            "--port",
+            str(self.port),
+            "--enable-auto-tool-choice",
+            "--tool-call-parser",
+            "hermes",
+            "--max-model-len",
+            str(self.max_model_len),
+        ]
+        if self.reasoning_parser is not None:
+            commands.extend(
+                [
+                    "--reasoning-parser",
+                    self.reasoning_parser,
+                ]
+            )
+        if self.data_parallel_size is None:
+            device_count = torch.cuda.is_available()
+        else:
+            device_count = self.data_parallel_size
+        if device_count > 1:
+            commands.extend(
+                [
+                    "--data-parallel-size",
+                    str(self.data_parallel_size),
+                ]
+            )
+        vllm_process = subprocess.Popen(commands)
         self.vllm_process = vllm_process
         return vllm_process
 
     def wait_for_server(self, timeout: int = 180) -> None:
-        url = f"{self.base_url[:-3]}/health"
+        url = f"{self.base_url}/health"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -75,11 +123,29 @@ class VLLMSetup(BaseModel):
         else:
             print("VLLM server is already running.")
 
+    def get_openai_client(self) -> AsyncOpenAI:
+        return AsyncOpenAI(
+            base_url=f"{self.base_url}/v1",
+            api_key=self.api_key,
+        )
 
-@function_tool
-def double_tool(x: int) -> int:
-    print(f"Doubling {x}")
-    return x * 2
+    @classmethod
+    def litellm_model(cls, model: str) -> str:
+        return f"hosted_vllm/{model}"
+
+    def chat_completions_model(self) -> OpenAIChatCompletionsModel:
+        return OpenAIChatCompletionsModel(
+            model=self.litellm_model(self.model),
+            openai_client=self.get_openai_client(),
+        )
+
+    def litellm_agentssdk_name(self) -> str:
+        os.environ["OPENAI_API_KEY"] = (
+            "dummy"  # Still needed for the SDK initialization
+        )
+        os.environ["HOSTED_VLLM_API_BASE"] = "http://localhost:5222/v1"
+        os.environ["HOSTED_VLLM_API_KEY"] = "dummy"
+        return f"litellm/{self.litellm_model(self.model)}"
 
 
 class ProxiedVLLMSetup(BaseModel):
@@ -97,7 +163,7 @@ class ProxiedVLLMSetup(BaseModel):
             {
                 "model_name": vllm_setup.model,
                 "litellm_params": {
-                    "model": cls.litellm_model(vllm_setup.model),
+                    "model": vllm_setup.litellm_model(vllm_setup.model),
                     "api_base": vllm_setup.base_url,
                     "api_key": vllm_setup.api_key,
                 },
@@ -117,11 +183,7 @@ class ProxiedVLLMSetup(BaseModel):
             llm_proxy=llm_proxy,
         )
 
-    @classmethod
-    def litellm_model(cls, model: str) -> str:
-        return f"hosted_vllm/{model}"
-
-    def get_openai_clent(self) -> AsyncOpenAI:
+    def get_openai_client(self) -> AsyncOpenAI:
         llm = self.llm_proxy.as_resource()
         return AsyncOpenAI(
             base_url=llm.endpoint,
@@ -133,6 +195,6 @@ class ProxiedVLLMSetup(BaseModel):
 
     def chat_completions_model(self) -> OpenAIChatCompletionsModel:
         return OpenAIChatCompletionsModel(
-            model=self.litellm_model(self.vllm_setup.model),
-            openai_client=self.get_openai_clent(),
+            model=self.vllm_setup.litellm_model(self.vllm_setup.model),
+            openai_client=self.get_openai_client(),
         )

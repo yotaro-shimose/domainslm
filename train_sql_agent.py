@@ -26,11 +26,13 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import agentlightning as agl
-from dotenv import load_dotenv
 import pandas as pd
+from dotenv import load_dotenv
 
 from sql_agent_rewrite import LitSQLAgent
 
+project_name = "AgentLightning"
+experiment_name = "spider-4"
 RL_TRAINING_CONFIG: Dict[str, Any] = {
     "algorithm": {
         "adv_estimator": "grpo",
@@ -46,7 +48,6 @@ RL_TRAINING_CONFIG: Dict[str, Any] = {
     },
     "actor_rollout_ref": {
         "rollout": {
-            "tensor_model_parallel_size": 1,
             "n": 4,
             "log_prob_micro_batch_size_per_gpu": 4,
             "multi_turn": {"format": "hermes"},
@@ -72,6 +73,7 @@ RL_TRAINING_CONFIG: Dict[str, Any] = {
                 "param_offload": True,
                 "optimizer_offload": True,
             },
+            "checkpoint": {"save_contents": ["hf_model"]},
         },
         "ref": {
             "log_prob_micro_batch_size_per_gpu": 8,
@@ -84,15 +86,19 @@ RL_TRAINING_CONFIG: Dict[str, Any] = {
         },
     },
     "trainer": {
-        "n_gpus_per_node": 2,
+        "nnodes": 1,
+        "n_gpus_per_node": 4,
         "val_before_train": True,
         "critic_warmup": 0,
         "logger": ["console", "wandb"],
-        "project_name": "AgentLightning",
-        "experiment_name": "spider",
-        "nnodes": 1,
+        "project_name": project_name,
+        "experiment_name": experiment_name,
         "test_freq": 32,
         "total_epochs": 2,
+        "save_freq": 32,
+        "max_actor_ckpt_to_keep": 1,
+        "max_critic_ckpt_to_keep": 1,
+        "default_local_dir": f"./checkpoints/{project_name}/{experiment_name}",
     },
 }
 
@@ -176,7 +182,7 @@ def train(config: Dict[str, Any], active_agent: Optional[str]) -> None:
     agent = LitSQLAgent()
     algorithm = agl.VERL(config)
     trainer = agl.Trainer(
-        n_runners=2, algorithm=algorithm, adapter={"agent_match": active_agent}
+        n_runners=80, algorithm=algorithm, adapter={"agent_match": active_agent}
     )
     print("Adapter agent match acknowledged:", trainer.adapter.agent_match)  # type: ignore
 

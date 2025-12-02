@@ -304,5 +304,6 @@ def debug_sql_agent():
 
 
 if __name__ == "__main__":
+    # Hello tracer!
     load_dotenv()
     debug_sql_agent()

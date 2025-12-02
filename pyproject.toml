@@ -17,7 +17,10 @@ dependencies = [
     "langchain-openai>=0.3.35",
     "weave>=0.51.56",
     "httpx>=0.28.1",
-    "openai-agents>=0.5.1",
+    "openai-agents[litellm]>=0.5.1",
+    "datasets==3.6.0",
+    "seaborn>=0.13.2",
+    "scikit-learn>=1.7.2",
 ]
 
 
