@@ -25,7 +25,8 @@ import agentlightning as agl
 import pandas as pd
 from langchain_community.utilities import SQLDatabase
 
-from domainslm.openai_util import AgentWrapper, AgentsSDKModel, OutputWithItems
+from domainslm.openai_util.agent import AgentWrapper, AgentsSDKModel
+from domainslm.openai_util.runresult import OutputWithItems
 from spider_eval.exec_eval import eval_exec_match
 
 agl.logging.configure_logger()
