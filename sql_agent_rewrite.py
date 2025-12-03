@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from agents import Agent, OpenAIChatCompletionsModel, Runner as OpenAIRunner
+from agents import OpenAIChatCompletionsModel
 from pydantic import BaseModel
 import logging
 import os
@@ -24,23 +24,13 @@ from typing import List, Optional, TypedDict, cast
 import agentlightning as agl
 import pandas as pd
 from langchain_community.utilities import SQLDatabase
-from langchain_core.messages import AnyMessage
 
+from domainslm.openai_util import AgentWrapper, AgentsSDKModel, OutputWithItems
 from spider_eval.exec_eval import eval_exec_match
 
 agl.logging.configure_logger()
 
 logger = logging.getLogger(__name__)
-
-
-class State(BaseModel):
-    question: str
-    query: str
-    execution: str
-    answer: str
-    feedback: str
-    num_turns: int
-    messages: list[AnyMessage]
 
 
 class SQLResponse(BaseModel):
@@ -51,18 +41,14 @@ class SQLAgent:
     def __init__(
         self,
         db: str,
-        endpoint: str,
-        model: str,
-        api_key: str | None,
+        model: AgentsSDKModel,
         db_schema: str | None = None,
         table_info_truncate: int = 2048,
     ):
         self.db = SQLDatabase.from_uri(db)  # type: ignore
         self.db_schema = db_schema
         self.table_info_truncate = table_info_truncate
-        self.agent = self.build_write_query_agent(
-            endpoint=endpoint, model=model, api_key=api_key
-        )
+        self.agent = self.build_write_query_agent(model=model)
 
     def get_table_info(self) -> str:
         """Get the table information in a human-readable format."""
@@ -84,18 +70,10 @@ class SQLAgent:
             return "No schema available."
 
     def build_write_query_agent(
-        self, endpoint: str, model: str, api_key: str | None
-    ) -> Agent:
-        agent = Agent(
+        self, model: AgentsSDKModel
+    ) -> AgentWrapper[SQLResponse]:
+        wrapper = AgentWrapper.create(
             name="SQLWriteQueryAgent",
-            model=OpenAIChatCompletionsModel(
-                model=model,
-                openai_client=AsyncOpenAI(
-                    base_url=endpoint,
-                    api_key=api_key,
-                ),
-            ),
-            output_type=SQLResponse,
             instructions=f"""
 You are an agent designed to interact with a SQL database.
      Given an input question, create a syntactically correct {self.db.dialect} query to run to help find the answer.
@@ -117,16 +95,18 @@ Respond in the following format:
 GENERATED QUERY
 ```
 """.strip(),
+            model=model,
+            output_type=SQLResponse,
         )
-        return agent
 
-    async def run_agent(self, question: str) -> str:
-        result = await OpenAIRunner.run(
-            self.agent,
-            input=f"Question: {question}",
+        return wrapper
+
+    async def run_agent(self, question: str) -> OutputWithItems[SQLResponse]:
+        result = await self.agent.run(
+            input=question,
         )
-        query = result.final_output_as(SQLResponse).query
-        return query
+
+        return result.output_with_reasoning()
 
 
 class DBTask(TypedDict):
@@ -142,14 +122,12 @@ class LitSQLAgent(agl.LitAgent[DBTask]):
         val_temperature: Optional[float] = None,
         max_turns: int = 3,
         table_info_truncate: int = 2048,
-        execution_truncate: int = 2048,
     ) -> None:
         super().__init__(trained_agents=trained_agents)
         self.val_temperature = val_temperature
         self.spider_dir = os.environ.get("VERL_SPIDER_DATA_DIR", "data")
         self.max_turns = max_turns
         self.table_info_truncate = table_info_truncate
-        self.execution_truncate = execution_truncate
 
     async def rollout_async(
         self,
@@ -196,15 +174,20 @@ class LitSQLAgent(agl.LitAgent[DBTask]):
             logger.info(f"[Rollout {rollout_id}] Ground Truth: {ground_truth}")
 
             # Run the agent
+            model = OpenAIChatCompletionsModel(
+                model=llm.model,
+                openai_client=AsyncOpenAI(
+                    base_url=llm.get_base_url(
+                        rollout.rollout_id, rollout.attempt.attempt_id
+                    ),
+                    api_key=llm.api_key,
+                ),
+            )
             agent = SQLAgent(
                 "sqlite:///" + db_path,
                 table_info_truncate=self.table_info_truncate,
                 db_schema=schema,
-                endpoint=llm.get_base_url(
-                    rollout.rollout_id, rollout.attempt.attempt_id
-                ),
-                model=llm.model,
-                api_key=llm.api_key,
+                model=model,
             )
             try:
                 result = await agent.run_agent(question)
@@ -223,7 +206,9 @@ class LitSQLAgent(agl.LitAgent[DBTask]):
             db_path = os.path.join(temp_dir, os.path.basename(original_db_path))
             shutil.copyfile(original_db_path, db_path)
 
-            reward = evaluate_query(result, ground_truth, db_path, raise_on_error=False)
+            reward = evaluate_query(
+                result.final_output.query, ground_truth, db_path, raise_on_error=False
+            )
             logger.info("[Rollout %s] Reward: %s", rollout_id, reward)
 
         end_time_eval = time.time()

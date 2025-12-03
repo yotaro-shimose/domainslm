@@ -1,7 +1,7 @@
 import os
 import subprocess
 import time
-from typing import ParamSpec, Self
+from typing import Self
 
 import agentlightning as agl
 import httpx
@@ -10,7 +10,11 @@ from agents import OpenAIChatCompletionsModel
 from openai import AsyncOpenAI
 from pydantic import BaseModel, InstanceOf
 
-P = ParamSpec("P")
+
+class LiteLLMModelName(BaseModel):
+    model_name: str
+
+
 class VLLMSetup(BaseModel):
     model: str
     port: int = 5222
@@ -139,13 +143,13 @@ class VLLMSetup(BaseModel):
             openai_client=self.get_openai_client(),
         )
 
-    def litellm_agentssdk_name(self) -> str:
+    def litellm_agentssdk_name(self) -> LiteLLMModelName:
         os.environ["OPENAI_API_KEY"] = (
             "dummy"  # Still needed for the SDK initialization
         )
         os.environ["HOSTED_VLLM_API_BASE"] = "http://localhost:5222/v1"
         os.environ["HOSTED_VLLM_API_KEY"] = "dummy"
-        return f"litellm/{self.litellm_model(self.model)}"
+        return LiteLLMModelName(model_name=f"litellm/{self.litellm_model(self.model)}")
 
 
 class ProxiedVLLMSetup(BaseModel):

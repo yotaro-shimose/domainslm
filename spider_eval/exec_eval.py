@@ -5,6 +5,7 @@
 
 import asyncio
 import os
+from pathlib import Path
 import random
 import re
 import sqlite3
@@ -126,7 +127,9 @@ def result_eq(result1: List[Tuple], result2: List[Tuple], order_matters: bool) -
 
 
 def replace_cur_year(query: str) -> str:
-    return re.sub("YEAR\s*\(\s*CURDATE\s*\(\s*\)\s*\)\s*", "2020", query, flags=re.IGNORECASE)
+    return re.sub(
+        "YEAR\s*\(\s*CURDATE\s*\(\s*\)\s*\)\s*", "2020", query, flags=re.IGNORECASE
+    )
 
 
 # get the database cursor for a sqlite database path
@@ -158,9 +161,11 @@ async def exec_on_db_(sqlite_path: str, query: str) -> Tuple[str, Any]:
         return "exception", e
 
 
-async def exec_on_db(sqlite_path: str, query: str, process_id: str = "", timeout: int = TIMEOUT) -> Tuple[str, Any]:
+async def exec_on_db(
+    sqlite_path: str | Path, query: str, timeout: int = TIMEOUT
+) -> Tuple[str, Any]:
     try:
-        return await asyncio.wait_for(exec_on_db_(sqlite_path, query), timeout)
+        return await asyncio.wait_for(exec_on_db_(str(sqlite_path), query), timeout)
     except asyncio.TimeoutError:
         return ("exception", TimeoutError)
     except Exception as e:
@@ -182,7 +187,12 @@ def postprocess(query: str) -> str:
 # 1 otherwise
 # the meaning of each auxillary argument can be seen in the parser definition in evaluation.py
 def eval_exec_match(
-    db: str, p_str: str, g_str: str, plug_value: bool, keep_distinct: bool, progress_bar_for_each_datapoint: bool
+    db: str,
+    p_str: str,
+    g_str: str,
+    plug_value: bool,
+    keep_distinct: bool,
+    progress_bar_for_each_datapoint: bool,
 ) -> int:
     # post-process the prediction.
     # e.g. removing spaces between ">" and "="
@@ -200,7 +210,11 @@ def eval_exec_match(
 
     # find all databases in the same directory
     db_dir = os.path.dirname(db)
-    db_paths = [os.path.join(db_dir, basename) for basename in os.listdir(db_dir) if ".sqlite" in basename]
+    db_paths = [
+        os.path.join(db_dir, basename)
+        for basename in os.listdir(db_dir)
+        if ".sqlite" in basename
+    ]
 
     preds = [p_str]
     # if plug in value (i.e. we do not consider value prediction correctness)
@@ -213,7 +227,6 @@ def eval_exec_match(
         preds = chain([p_str], preds)
 
     for pred in preds:
-
         pred_passes = 1
         # compare the gold and predicted denotations on each database in the directory
         # wrap with progress bar if required
@@ -227,7 +240,9 @@ def eval_exec_match(
             p_flag, p_denotation = run_sync_ephemeral(exec_on_db(db_path, pred))
 
             # we should expect the gold to be succesfully executed on the database
-            assert g_flag != "exception", "gold query %s has error on database file %s" % (g_str, db_path)
+            assert g_flag != "exception", (
+                "gold query %s has error on database file %s" % (g_str, db_path)
+            )
 
             # wrong if execution fails
             if p_flag == "exception":

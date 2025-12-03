@@ -21,6 +21,7 @@ dependencies = [
     "datasets==3.6.0",
     "seaborn>=0.13.2",
     "scikit-learn>=1.7.2",
+    "loguru>=0.7.3",
 ]
 
 
