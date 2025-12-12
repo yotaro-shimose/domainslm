@@ -18,17 +18,17 @@ The script uses reinforcement learning with VERL framework
 to train agents on the Spider dataset for text-to-SQL generation tasks.
 """
 
-from __future__ import annotations
-
 import os
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import agentlightning as agl
 import pandas as pd
 from dotenv import load_dotenv
 
+from domainslm.spider.sft_sample import SFTDataset
 from sql_agent_rewrite import LitSQLAgent
 
 project_name = "AgentLightning"
@@ -87,7 +87,7 @@ RL_TRAINING_CONFIG: Dict[str, Any] = {
     },
     "trainer": {
         "nnodes": 1,
-        "n_gpus_per_node": 4,
+        "n_gpus_per_node": 8,
         "val_before_train": True,
         "critic_warmup": 0,
         "logger": ["console", "wandb"],
@@ -185,10 +185,10 @@ def train(config: Dict[str, Any], active_agent: Optional[str]) -> None:
         n_runners=80, algorithm=algorithm, adapter={"agent_match": active_agent}
     )
     print("Adapter agent match acknowledged:", trainer.adapter.agent_match)  # type: ignore
-
-    train_data = pd.read_parquet(config["data"]["train_files"]).to_dict(
-        orient="records"
-    )  # type: ignore
+    sft_dataset = SFTDataset.model_validate_json(
+        Path("data/reflection_train.json").read_text()
+    )
+    train_data = sft_dataset.as_rl_dataset()
     val_data = pd.read_parquet(config["data"]["val_files"]).to_dict(orient="records")  # type: ignore
     trainer.fit(agent, train_dataset=train_data, val_dataset=val_data)  # type: ignore
 

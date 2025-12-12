@@ -1,22 +1,27 @@
-from asyncio import timeout
 import asyncio
-from dataclasses import dataclass
 import os
-from typing import Literal, Self
+from asyncio import timeout
+from dataclasses import dataclass
+from typing import Any, Literal, Self, Sequence
+
 from agents import (
     Agent,
     MaxTurnsExceeded,
     ModelBehaviorError,
     ModelSettings,
     OpenAIChatCompletionsModel,
+    Runner,
+    Tool,
     TResponseInputItem,
     UserError,
-    Runner,
 )
 from agents.run import DEFAULT_MAX_TURNS
 from pydantic import BaseModel
+
 from domainslm.openai_util.runresult import RunResultWrapper
 from domainslm.vllm import VLLMSetup
+
+from litellm import ContextWindowExceededError
 
 type AgentsSDKModel = str | OpenAIChatCompletionsModel | VLLMSetup
 
@@ -45,6 +50,7 @@ class AgentWrapper[TOutput: BaseModel | str]:
         model: str | OpenAIChatCompletionsModel | VLLMSetup,
         model_settings: ModelSettings | None = None,
         output_type: type[TOutput] | None = None,
+        tools: Sequence[Tool] | None = None,
     ) -> Self:
         if isinstance(model, (str, OpenAIChatCompletionsModel)):
             agents_sdk_model = model
@@ -66,6 +72,7 @@ class AgentWrapper[TOutput: BaseModel | str]:
             instructions=instructions,
             model=agents_sdk_model,
             output_type=output_type,
+            tools=list(tools) if tools is not None else [],
             **kwargs,
         )
         return cls(agent=agent)
@@ -74,9 +81,9 @@ class AgentWrapper[TOutput: BaseModel | str]:
         self,
         input: str | list[TResponseInputItem],
         *,
-        context: None = None,
+        context: Any | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
-        time_out_seconds: float = 60.0,
+        time_out_seconds: float = 120.0,
     ) -> RunResultWrapper[TOutput]:
         try:
             async with timeout(time_out_seconds):
@@ -105,5 +112,10 @@ class AgentWrapper[TOutput: BaseModel | str]:
             raise AgentRunFailure(
                 str(e),
                 cause="UserError",
+            )
+        except ContextWindowExceededError as e:
+            raise AgentRunFailure(
+                str(e),
+                cause="ContextWindowExceededError",
             )
         return RunResultWrapper[type(result.final_output)](result=result)

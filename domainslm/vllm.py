@@ -17,6 +17,7 @@ class LiteLLMModelName(BaseModel):
 
 class VLLMSetup(BaseModel):
     model: str
+    lora_adapter: str | None = None
     port: int = 5222
     max_model_len: int = 32768
     api_key: str = "your_api_key_here"
@@ -78,6 +79,14 @@ class VLLMSetup(BaseModel):
             "--max-model-len",
             str(self.max_model_len),
         ]
+        if self.lora_adapter is not None:
+            commands.extend(
+                [
+                    "--enable-lora",
+                    "--lora-modules",
+                    f"sql-lora={self.lora_adapter}",
+                ]
+            )
         if self.reasoning_parser is not None:
             commands.extend(
                 [
@@ -93,7 +102,9 @@ class VLLMSetup(BaseModel):
             commands.extend(
                 [
                     "--data-parallel-size",
-                    str(self.data_parallel_size),
+                    str(device_count),
+                    "--max-num-seqs",
+                    f"{256 * device_count}",
                 ]
             )
         vllm_process = subprocess.Popen(commands)

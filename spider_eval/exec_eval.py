@@ -12,7 +12,7 @@ import sqlite3
 import threading
 from collections import defaultdict
 from itertools import chain, product
-from typing import Any, List, Set, Tuple
+from typing import Any
 
 import tqdm
 
@@ -24,12 +24,12 @@ TIMEOUT = 60
 EXEC_TMP_DIR = "/tmp/"
 
 
-def permute_tuple(element: Tuple, perm: Tuple) -> Tuple:
+def permute_tuple(element: tuple, perm: tuple) -> tuple:
     assert len(element) == len(perm)
     return tuple([element[i] for i in perm])
 
 
-def unorder_row(row: Tuple) -> Tuple:
+def unorder_row(row: tuple) -> tuple:
     return tuple(sorted(row, key=lambda x: str(x) + str(type(x))))
 
 
@@ -37,7 +37,7 @@ def unorder_row(row: Tuple) -> Tuple:
 # [result_1 and result_2 has the same bag of unordered row]
 # is a necessary condition of
 # [result_1 and result_2 are equivalent in denotation]
-def quick_rej(result1: List[Tuple], result2: List[Tuple], order_matters: bool) -> bool:
+def quick_rej(result1: list[tuple], result2: list[tuple], order_matters: bool) -> bool:
     s1 = [unorder_row(row) for row in result1]
     s2 = [unorder_row(row) for row in result2]
     if order_matters:
@@ -47,7 +47,7 @@ def quick_rej(result1: List[Tuple], result2: List[Tuple], order_matters: bool) -
 
 
 # return whether two bag of relations are equivalent
-def multiset_eq(l1: List, l2: List) -> bool:
+def multiset_eq(l1: list, l2: list) -> bool:
     if len(l1) != len(l2):
         return False
     d = defaultdict(int)
@@ -60,7 +60,7 @@ def multiset_eq(l1: List, l2: List) -> bool:
     return True
 
 
-def get_constraint_permutation(tab1_sets_by_columns: List[Set], result2: List[Tuple]):
+def get_constraint_permutation(tab1_sets_by_columns: list[set], result2: list[tuple]):
     num_cols = len(result2[0])
     perm_constraints = [{i for i in range(num_cols)} for _ in range(num_cols)]
     if num_cols <= 3:
@@ -78,7 +78,7 @@ def get_constraint_permutation(tab1_sets_by_columns: List[Set], result2: List[Tu
 
 
 # check whether two denotations are correct
-def result_eq(result1: List[Tuple], result2: List[Tuple], order_matters: bool) -> bool:
+def result_eq(result1: list[tuple], result2: list[tuple], order_matters: bool) -> bool:
     if len(result1) == 0 and len(result2) == 0:
         return True
 
@@ -146,7 +146,7 @@ def get_cursor_from_path(sqlite_path: str):
     return cursor
 
 
-async def exec_on_db_(sqlite_path: str, query: str) -> Tuple[str, Any]:
+async def exec_on_db_(sqlite_path: str, query: str) -> tuple[str, Any]:
     query = replace_cur_year(query)
     cursor = get_cursor_from_path(sqlite_path)
     try:
@@ -163,7 +163,7 @@ async def exec_on_db_(sqlite_path: str, query: str) -> Tuple[str, Any]:
 
 async def exec_on_db(
     sqlite_path: str | Path, query: str, timeout: int = TIMEOUT
-) -> Tuple[str, Any]:
+) -> tuple[str, Any]:
     try:
         return await asyncio.wait_for(exec_on_db_(str(sqlite_path), query), timeout)
     except asyncio.TimeoutError:

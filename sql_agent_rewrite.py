@@ -9,111 +9,25 @@ as well as https://langchain-ai.github.io/langgraph/tutorials/sql-agent/
 
 from __future__ import annotations
 
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
-from agents import OpenAIChatCompletionsModel
-from pydantic import BaseModel
 import logging
 import os
-import shutil
-import tempfile
-import time
-from typing import List, Optional, TypedDict, cast
-
+from typing import List, Optional, cast
 
 import agentlightning as agl
 import pandas as pd
-from langchain_community.utilities import SQLDatabase
+from agents import OpenAIChatCompletionsModel
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
-from domainslm.openai_util.agent import AgentWrapper, AgentsSDKModel
-from domainslm.openai_util.runresult import OutputWithItems
+from domainslm.openai_util.agent import AgentRunFailure
+from domainslm.spider.env import SpiderEnvironment
+from domainslm.spider.sft_sample import DBTask
+from domainslm.spider.sql_agent import SQLAgent
 from spider_eval.exec_eval import eval_exec_match
 
 agl.logging.configure_logger()
 
 logger = logging.getLogger(__name__)
-
-
-class SQLResponse(BaseModel):
-    query: str
-
-
-class SQLAgent:
-    def __init__(
-        self,
-        db: str,
-        model: AgentsSDKModel,
-        db_schema: str | None = None,
-        table_info_truncate: int = 2048,
-    ):
-        self.db = SQLDatabase.from_uri(db)  # type: ignore
-        self.db_schema = db_schema
-        self.table_info_truncate = table_info_truncate
-        self.agent = self.build_write_query_agent(model=model)
-
-    def get_table_info(self) -> str:
-        """Get the table information in a human-readable format."""
-        try:
-            table_info = self.db.get_table_info()
-            if len(table_info) > self.table_info_truncate:
-                table_info = (
-                    table_info[: self.table_info_truncate] + "\n... (truncated)"
-                )
-            return table_info
-        except Exception as e:
-            logger.error(f"Failed to get table info: {e}")
-            if self.db_schema:
-                if len(self.db_schema) > self.table_info_truncate:
-                    return (
-                        self.db_schema[: self.table_info_truncate] + "\n... (truncated)"
-                    )
-                return self.db_schema
-            return "No schema available."
-
-    def build_write_query_agent(
-        self, model: AgentsSDKModel
-    ) -> AgentWrapper[SQLResponse]:
-        wrapper = AgentWrapper.create(
-            name="SQLWriteQueryAgent",
-            instructions=f"""
-You are an agent designed to interact with a SQL database.
-     Given an input question, create a syntactically correct {self.db.dialect} query to run to help find the answer.
-
-Pay attention to use only the column names that you can see in the schema description.
-Be careful to not query for columns that do not exist.
-Also, pay attention to which column is in which table.
-
-## Table Schema ##
-
-Only use the following tables:
-{self.get_table_info()}
-
-## Output Format ##
-
-Respond in the following format:
-
-```{self.db.dialect}
-GENERATED QUERY
-```
-""".strip(),
-            model=model,
-            output_type=SQLResponse,
-        )
-
-        return wrapper
-
-    async def run_agent(self, question: str) -> OutputWithItems[SQLResponse]:
-        result = await self.agent.run(
-            input=question,
-        )
-
-        return result.output_with_reasoning()
-
-
-class DBTask(TypedDict):
-    question: str
-    query: str
-    db_id: str
 
 
 class LitSQLAgent(agl.LitAgent[DBTask]):
@@ -122,7 +36,7 @@ class LitSQLAgent(agl.LitAgent[DBTask]):
         trained_agents: Optional[str] = r"write",
         val_temperature: Optional[float] = None,
         max_turns: int = 3,
-        table_info_truncate: int = 2048,
+        table_info_truncate: int = 20000,
     ) -> None:
         super().__init__(trained_agents=trained_agents)
         self.val_temperature = val_temperature
@@ -139,93 +53,51 @@ class LitSQLAgent(agl.LitAgent[DBTask]):
         if not isinstance(rollout, agl.AttemptedRollout):
             raise ValueError("Expected rollout to be of type AttemptedRollout")
         question = task["question"]
-        start_time = time.time()
-        llm: agl.LLM = cast(agl.LLM, resources["main_llm"])
-
-        if rollout.mode == "train":
-            original_db_path = os.path.join(
-                self.spider_dir, "database", task["db_id"], task["db_id"] + ".sqlite"
-            )
-        else:
-            original_db_path = os.path.join(
-                self.spider_dir,
-                "test_database",
-                task["db_id"],
-                task["db_id"] + ".sqlite",
-            )
+        db_id = task["db_id"]
         ground_truth = task["query"]
-        if not os.path.exists(original_db_path):
-            logger.error(f"Database {original_db_path} does not exist. Skipping.")
-            return None
-
-        schema_path = os.path.join(os.path.dirname(original_db_path), "schema.sql")
-        if os.path.exists(schema_path):
-            with open(schema_path, "r") as f:
-                schema = f.read()
-        else:
-            logger.error("Schema file not found: %s", schema_path)
-            schema = "No schema available."
-
-        rollout_id = rollout.rollout_id
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = os.path.join(temp_dir, os.path.basename(original_db_path))
-            shutil.copyfile(original_db_path, db_path)
-            logger.info(f"[Rollout {rollout_id}] Question: {question}")
-            logger.info(f"[Rollout {rollout_id}] Ground Truth: {ground_truth}")
-
-            # Run the agent
-            model = OpenAIChatCompletionsModel(
-                model=llm.model,
-                openai_client=AsyncOpenAI(
-                    base_url=llm.get_base_url(
-                        rollout.rollout_id, rollout.attempt.attempt_id
-                    ),
-                    api_key=llm.api_key,
+        llm: agl.LLM = cast(agl.LLM, resources["main_llm"])
+        # Run the agent
+        model = OpenAIChatCompletionsModel(
+            model=llm.model,
+            openai_client=AsyncOpenAI(
+                base_url=llm.get_base_url(
+                    rollout.rollout_id, rollout.attempt.attempt_id
                 ),
-            )
+                api_key=llm.api_key,
+            ),
+        )
+        with SpiderEnvironment.from_db_id(
+            db_id, split="train" if rollout.mode == "train" else "test"
+        ) as env:
+            try:
+                db_schema = env.get_table_info()
+                dialect = env.dialect()
+                if len(db_schema) > self.table_info_truncate:
+                    logger.warning(f"Schema length is too long: {len(db_schema)}")
+                    return None
+            except EnvironmentError as e:
+                logger.warning(f"Schema acquisition failed: {e}")
+                return None
             agent = SQLAgent(
-                "sqlite:///" + db_path,
-                table_info_truncate=self.table_info_truncate,
-                db_schema=schema,
                 model=model,
+                db_schema=db_schema,
+                dialect=dialect,
             )
             try:
                 result = await agent.run_agent(question)
+            except AgentRunFailure as e:
+                logger.warning(f"Agent execution failed: {e.cause} - {str(e)}")
+                return None
 
-            except Exception as e:
-                logger.exception(
-                    f"[Rollout {rollout_id}] Error during agent invocation: {e}"
+            try:
+                env_ret = await env.evaluate(
+                    gold_query=ground_truth,
+                    predicted_query=result.final_output.query,
                 )
-                return
-
-            logger.info(f"[Rollout {rollout_id}] Generated Query: {result}")
-
-        end_time_rollout = time.time()
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = os.path.join(temp_dir, os.path.basename(original_db_path))
-            shutil.copyfile(original_db_path, db_path)
-
-            reward = evaluate_query(
-                result.final_output.query, ground_truth, db_path, raise_on_error=False
-            )
-            logger.info("[Rollout %s] Reward: %s", rollout_id, reward)
-
-        end_time_eval = time.time()
-
-        logger.info(
-            "[Rollout %s] Time taken for rollout: %.2f seconds",
-            rollout_id,
-            end_time_rollout - start_time,
-        )
-        logger.info(
-            "[Rollout %s] Time taken for evaluation: %.2f seconds",
-            rollout_id,
-            end_time_eval - end_time_rollout,
-        )
-
-        return reward
+            except EnvironmentError as e:
+                logger.warning(f"Evaluation failed: {e}")
+                return None
+            return env_ret.match
 
 
 def evaluate_query(

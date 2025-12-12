@@ -1,14 +1,15 @@
 from dataclasses import dataclass
 from typing import Iterable, Literal
-from loguru import logger
+
 from agents import (
-    RunResult,
     MessageOutputItem,
     ReasoningItem,
+    RunResult,
 )
-from pydantic import BaseModel
-from openai.types.responses.response_reasoning_item import Content as ReasoningContent
+from loguru import logger
 from openai.types.responses.response_output_message import Content as MessageContent
+from openai.types.responses.response_reasoning_item import Content as ReasoningContent
+from pydantic import BaseModel
 
 type AgentItems = MessageOutputItem | ReasoningItem
 type Role = Literal["user", "assistant", "system"]
@@ -39,8 +40,6 @@ class OutputWithItems[TOutput]:
     def simplified(self) -> list[SimpleReasoningItem | SimpleMessageItem]:
         simplified_items: list[SimpleReasoningItem | SimpleMessageItem] = []
         for item in self.items:
-            if item.raw_item.content is None:
-                continue
             if isinstance(item, MessageOutputItem):
                 simplified_items.append(
                     SimpleMessageItem(
@@ -51,7 +50,10 @@ class OutputWithItems[TOutput]:
             elif isinstance(item, ReasoningItem):
                 simplified_items.append(
                     SimpleReasoningItem(
-                        role="system", content=contents2text(item.raw_item.content)
+                        role="assistant",
+                        content="\n".join(
+                            [summary.text for summary in item.raw_item.summary]
+                        ),
                     )
                 )
         return simplified_items

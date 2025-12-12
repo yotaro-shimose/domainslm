@@ -5,8 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "agentlightning[verl]",
-    "flash-attn>=2.8.3",
+    "flash-attn==2.8.1",
     "langchain>=0.3.27",
     "langchain-community>=0.3.21",
     "langgraph",
@@ -17,15 +16,32 @@ dependencies = [
     "langchain-openai>=0.3.35",
     "weave>=0.51.56",
     "httpx>=0.28.1",
-    "openai-agents[litellm]>=0.5.1",
-    "datasets==3.6.0",
     "seaborn>=0.13.2",
     "scikit-learn>=1.7.2",
     "loguru>=0.7.3",
+    "gitpython>=3.1.45",
+    "psutil>=7.0.0",
+    "sentencepiece>=0.2.1",
+    "accelerate>=0.34.1",
+    "bitsandbytes==0.45.5",
+    "agentlightning[verl]>=0.2.2",
+    "openai-agents>=0.6.1",
+    "pydantic>=2.12.5",
+    "unsloth==2025.10.1",
+    "unsloth-zoo==2025.10.1",
+    "bitsandbytes",
+    "peft",
+    "datasets",
+    "transformers==4.55.4",
+    "trl",
+    "kernels",
+    "vllm",
+    "openai-agents[litellm]",
 ]
 
 
 [dependency-groups]
 dev = [
-    "gdown"
+    "gdown",
+    "pip>=25.3",
 ]

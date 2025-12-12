@@ -14,3 +14,11 @@ wandb
 
 data
 actor
+outdated
+outputs
+unsloth_compiled_cache
+multidoc2dial
+qwen3-4b-sql-finetuned
+qwen3-4b-sql-merged
+.vscode
+.git
